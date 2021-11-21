@@ -218,7 +218,7 @@ namespace JitDasm {
 					throw new ApplicationException("Missing output dir");
 				baseDir = outputDir;
 				filenameProvider = new FilenameProvider(filenameFormat, baseDir, DASM_EXT);
-				var types = new Dictionary<uint, List<DisasmInfo>>();
+				var types = new Dictionary<int, List<DisasmInfo>>();
 				foreach (var method in methods) {
 					if (!types.TryGetValue(method.TypeToken, out var typeMethods))
 						types.Add(method.TypeToken, typeMethods = new List<DisasmInfo>());
@@ -227,7 +227,7 @@ namespace JitDasm {
 				var allTypes = new List<List<DisasmInfo>>(types.Values);
 				allTypes.Sort((a, b) => StringComparer.Ordinal.Compare(a[0].TypeFullName, b[0].TypeFullName));
 				foreach (var typeMethods in allTypes) {
-					uint token = typeMethods[0].TypeToken;
+					int token = typeMethods[0].TypeToken;
 					var name = GetTypeName(typeMethods[0].TypeFullName);
 					var getTextWriter = CreateGetTextWriter(filenameProvider.GetFilename(token, name));
 					jobs.Add(new DisasmJob(getTextWriter, typeMethods.ToArray()));
@@ -240,7 +240,7 @@ namespace JitDasm {
 				baseDir = outputDir;
 				filenameProvider = new FilenameProvider(filenameFormat, baseDir, DASM_EXT);
 				foreach (var method in methods) {
-					uint token = method.MethodToken;
+					int token = method.MethodToken;
 					var name = method.MethodName.Replace('.', '_');
 					var getTextWriter = CreateGetTextWriter(filenameProvider.GetFilename(token, name));
 					jobs.Add(new DisasmJob(getTextWriter, new[] { method }));
@@ -267,26 +267,23 @@ namespace JitDasm {
 			var methods = new List<DisasmInfo>();
 			var knownSymbols = new KnownSymbols();
 			int bitness;
-			using (var dataTarget = DataTarget.AttachToProcess(pid, 0, AttachFlag.Passive)) {
-				if (dataTarget.ClrVersions.Count == 0)
+			using (var dataTarget = DataTarget.AttachToProcess(pid, true)) {
+				if (dataTarget.ClrVersions.Length == 0)
 					throw new ApplicationException("Couldn't find CLR/CoreCLR");
-				if (dataTarget.ClrVersions.Count > 1)
+				if (dataTarget.ClrVersions.Length > 1)
 					throw new ApplicationException("Found more than one CLR/CoreCLR");
 				var clrInfo = dataTarget.ClrVersions[0];
-				var clrRuntime = clrInfo.CreateRuntime(clrInfo.LocalMatchingDac);
-				bitness = clrRuntime.PointerSize * 8;
+				var clrRuntime = clrInfo.CreateRuntime();
+				bitness = dataTarget.DataReader.PointerSize * 8;
 
-				// Per https://github.com/microsoft/clrmd/issues/303
-				dataTarget.DataReader.Flush();
-
-				var module = clrRuntime.Modules.FirstOrDefault(a =>
+				var module = clrRuntime.EnumerateModules().FirstOrDefault(a =>
 					StringComparer.OrdinalIgnoreCase.Equals(a.Name, moduleName) ||
 					StringComparer.OrdinalIgnoreCase.Equals(Path.GetFileNameWithoutExtension(a.Name), moduleName) ||
-					StringComparer.OrdinalIgnoreCase.Equals(a.FileName, moduleName));
+					StringComparer.OrdinalIgnoreCase.Equals(a.AssemblyName, moduleName));
 				if (module is null)
 					throw new ApplicationException($"Couldn't find module '{moduleName}'");
 
-				module.Runtime.Flush();
+				module.AppDomain.Runtime.FlushCachedData();
 
 				foreach (var type in EnumerateTypes(module, heapSearch)) {
 					if (!typeFilter.IsMatch(type.Name, type.MetadataToken))
@@ -318,11 +315,18 @@ namespace JitDasm {
 		}
 
 		static IEnumerable<ClrType> EnumerateTypesCore(ClrModule module, bool heapSearch) {
-			foreach (var type in module.EnumerateTypes())
-				yield return type;
+			var runtime = module.AppDomain.Runtime;
+
+			foreach (var (methodTable, _) in module.EnumerateTypeDefToMethodTableMap()) {
+				var type = runtime.GetTypeByMethodTable(methodTable);
+
+				if (type is not null) {
+					yield return type;
+				}
+			}
 
 			if (heapSearch) {
-				foreach (var obj in module.Runtime.Heap.EnumerateObjects()) {
+				foreach (var obj in runtime.Heap.EnumerateObjects()) {
 					var type = obj.Type;
 					if (type?.Module == module)
 						yield return type;
@@ -334,9 +338,10 @@ namespace JitDasm {
 		// then on the main thread, we use CLRMD (not thread safe), and then parallel for to disassemble them.
 		static void DecodeInstructions(KnownSymbols knownSymbols, ClrRuntime runtime, DisasmInfo disasmInfo) {
 			var instrs = disasmInfo.Instructions;
+			var pointerSize = runtime.DataTarget!.DataReader.PointerSize;
 			foreach (var info in disasmInfo.Code) {
 				var reader = new ByteArrayCodeReader(info.Code);
-				var decoder = Decoder.Create(runtime.PointerSize * 8, reader);
+				var decoder = Decoder.Create(pointerSize * 8, reader);
 				decoder.IP = info.IP;
 				while (reader.CanReadByte) {
 					ref var instr = ref instrs.AllocUninitializedElement();
@@ -366,7 +371,7 @@ namespace JitDasm {
 							break;
 
 						case OpKind.Immediate32:
-							if (runtime.PointerSize == 4)
+							if (pointerSize == 4)
 								AddSymbol(knownSymbols, runtime, instr.GetImmediate(j), symFlags | AddSymbolFlags.CanBeMethod);
 							break;
 
@@ -392,7 +397,7 @@ namespace JitDasm {
 							else {
 								switch (instr.MemoryDisplSize) {
 								case 4:
-									if (runtime.PointerSize == 4)
+									if (pointerSize == 4)
 										AddSymbol(knownSymbols, runtime, instr.MemoryDisplacement, symFlags);
 									break;
 
@@ -432,7 +437,7 @@ namespace JitDasm {
 				return false;
 			}
 
-			string name;
+			string? name;
 
 			name = runtime.GetJitHelperFunctionName(address);
 			if (!(name is null)) {
@@ -440,16 +445,17 @@ namespace JitDasm {
 				return true;
 			}
 
-			name = runtime.GetMethodTableName(address);
+			name = runtime.DacLibrary.SOSDacInterface.GetMethodTableName(address);
 			if (!(name is null)) {
 				result = new SymbolResult(address, "methodtable(" + name + ")", FormatterTextKind.Data);
 				return true;
 			}
 
-			ClrMethod? method = runtime.GetMethodByAddress(address);
-			if (method is null && (address & ((uint)runtime.PointerSize - 1)) == 0 && (flags & AddSymbolFlags.CallMem) != 0) {
-				if (runtime.ReadPointer(address, out ulong newAddress) && newAddress >= MIN_ADDR)
-					method = runtime.GetMethodByAddress(newAddress);
+			ClrMethod? method = runtime.GetMethodByInstructionPointer(address);
+			var dataReader = runtime.DataTarget!.DataReader;
+			if (method is null && (address & ((uint)dataReader.PointerSize - 1)) == 0 && (flags & AddSymbolFlags.CallMem) != 0) {
+				if (dataReader.ReadPointer(address, out ulong newAddress) && newAddress >= MIN_ADDR)
+					method = runtime.GetMethodByInstructionPointer(newAddress);
 			}
 			if (!(method is null) && (flags & AddSymbolFlags.CanBeMethod) == 0) {
 				// There can be data at the end of the method, after the code. Don't return a method symbol.
@@ -469,7 +475,7 @@ namespace JitDasm {
 		}
 
 		static DisasmInfo CreateDisasmInfo(DataTarget dataTarget, ClrMethod method) {
-			var info = new DisasmInfo(method.Type.MetadataToken, method.Type.Name, method.MetadataToken, method.ToString() ?? "???", method.Name, method.Type.Module.IsFile ? method.Type.Module.FileName : null, CreateILMap(method.ILOffsetMap));
+			var info = new DisasmInfo(method.Type.MetadataToken, method.Type.Name, method.MetadataToken, method.ToString() ?? "???", method.Name, null, CreateILMap(method.ILOffsetMap.ToArray()));
 			var codeInfo = method.HotColdInfo;
 			ReadCode(dataTarget, info, codeInfo.HotStart, codeInfo.HotSize);
 			ReadCode(dataTarget, info, codeInfo.ColdStart, codeInfo.ColdSize);
@@ -500,7 +506,7 @@ namespace JitDasm {
 			if (startAddr == 0 || size == 0)
 				return;
 			var code = new byte[(int)size];
-			if (!dataTarget.ReadProcessMemory(startAddr, code, code.Length, out int bytesRead) || bytesRead != code.Length)
+			if (dataTarget.DataReader.Read(startAddr, code) != code.Length)
 				throw new ApplicationException($"Couldn't read process memory @ 0x{startAddr:X}");
 			info.Code.Add(new NativeCode(startAddr, code));
 		}

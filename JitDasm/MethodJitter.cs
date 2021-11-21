@@ -73,7 +73,7 @@ namespace JitDasm {
 				}
 			}
 			foreach (var type in allTypes) {
-				if (!typeFilter.IsMatch(MakeClrmdTypeName(type.FullName ?? string.Empty), (uint)type.MetadataToken))
+				if (!typeFilter.IsMatch(MakeClrmdTypeName(type.FullName ?? string.Empty), type.MetadataToken))
 					continue;
 				bool isDelegate = typeof(Delegate).IsAssignableFrom(type);
 				foreach (var method in GetMethods(type)) {
@@ -81,7 +81,7 @@ namespace JitDasm {
 						continue;
 					if (method.IsGenericMethod)
 						continue;
-					if (!methodFilter.IsMatch(method.Name, (uint)method.MetadataToken))
+					if (!methodFilter.IsMatch(method.Name, method.MetadataToken))
 						continue;
 #if NETCOREAPP
 					// Not supported on .NET Core
