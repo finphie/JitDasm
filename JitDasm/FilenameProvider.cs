@@ -44,7 +44,7 @@ namespace JitDasm {
 				this.extension = extension;
 		}
 
-		public string GetFilename(int token, string name) {
+		public string GetFilename(uint token, string name) {
 			string candidate;
 			switch (filenameFormat) {
 			case FilenameFormat.MemberName:

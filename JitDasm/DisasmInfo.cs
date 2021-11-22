@@ -26,9 +26,9 @@ using Iced.Intel;
 
 namespace JitDasm {
 	sealed class DisasmInfo {
-		public readonly int TypeToken;
+		public readonly uint TypeToken;
 		public readonly string TypeFullName;
-		public readonly int MethodToken;
+		public readonly uint MethodToken;
 		public readonly string MethodFullName;
 		public readonly string MethodName;
 		public readonly string? ModuleFilename;
@@ -36,12 +36,12 @@ namespace JitDasm {
 		public readonly List<NativeCode> Code = new List<NativeCode>();
 		public readonly InstructionList Instructions = new InstructionList();
 
-		public DisasmInfo(int typeToken, string typeFullName, int methodToken, string methodFullName, string? methodName, string? moduleFilename, ILMap[] ilMap) {
+		public DisasmInfo(uint typeToken, string typeFullName, uint methodToken, string methodFullName, string methodName, string? moduleFilename, ILMap[] ilMap) {
 			TypeToken = typeToken;
 			TypeFullName = typeFullName;
 			MethodToken = methodToken;
 			MethodFullName = methodFullName;
-			MethodName = methodName ?? "";
+			MethodName = methodName;
 			ModuleFilename = moduleFilename;
 			ILMap = ilMap;
 		}
