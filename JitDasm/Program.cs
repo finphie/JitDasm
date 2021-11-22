@@ -155,7 +155,7 @@ namespace JitDasm {
 				throw new ArgumentOutOfRangeException(nameof(disassemblerOutputKind));
 			}
 			formatter.Options.FirstOperandCharIndex = 8;
-			formatter.Options.MemorySizeOptions = MemorySizeOptions.Minimum;
+			formatter.Options.MemorySizeOptions = MemorySizeOptions.Minimal;
 			formatter.Options.ShowBranchSize = !diffable;
 
 			return formatter;
@@ -387,10 +387,6 @@ namespace JitDasm {
 							AddSymbol(knownSymbols, runtime, instr.GetImmediate(j), symFlags);
 							break;
 
-						case OpKind.Memory64:
-							AddSymbol(knownSymbols, runtime, instr.MemoryAddress64, symFlags);
-							break;
-
 						case OpKind.Memory:
 							if (instr.IsIPRelativeMemoryOperand)
 								AddSymbol(knownSymbols, runtime, instr.IPRelativeMemoryAddress, symFlags);
@@ -398,11 +394,11 @@ namespace JitDasm {
 								switch (instr.MemoryDisplSize) {
 								case 4:
 									if (pointerSize == 4)
-										AddSymbol(knownSymbols, runtime, instr.MemoryDisplacement, symFlags);
+										AddSymbol(knownSymbols, runtime, instr.MemoryDisplacement32, symFlags);
 									break;
 
 								case 8:
-									AddSymbol(knownSymbols, runtime, (ulong)(int)instr.MemoryDisplacement, symFlags);
+									AddSymbol(knownSymbols, runtime, instr.MemoryDisplacement64, symFlags);
 									break;
 								}
 							}

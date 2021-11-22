@@ -202,8 +202,8 @@ namespace JitDasm {
 					ulong displ;
 					switch (instr.MemoryDisplSize) {
 					case 2:
-					case 4: displ = instr.MemoryDisplacement; break;
-					case 8: displ = (ulong)(int)instr.MemoryDisplacement; break;
+					case 4: displ = instr.MemoryDisplacement32; break;
+					case 8: displ = instr.MemoryDisplacement64; break;
 					default:
 						Debug.Fail($"Unknown mem displ size: {instr.MemoryDisplSize}");
 						goto case 8;
@@ -364,7 +364,7 @@ namespace JitDasm {
 			}
 
 			if (knownSymbols.TryGetSymbol(address, out symbol)) {
-				if (instruction.OpCount == 1 && (instruction.Op0Kind == OpKind.Memory || instruction.Op0Kind == OpKind.Memory64)) {
+				if (instruction.OpCount == 1 && (instruction.Op0Kind == OpKind.Memory)) {
 					var code = instruction.Code;
 					if (code == Code.Call_rm32 || code == Code.Jmp_rm32)
 						symbol = new SymbolResult(symbol.Address, symbol.Text, symbol.Flags, MemorySize.DwordOffset);
